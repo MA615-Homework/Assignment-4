@@ -1,0 +1,168 @@
+---
+title: "Sentence-level Sentiment Analysis"
+author: Elisa Zhang
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(scales)
+library(methods)
+library(knitr)
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+library(tidytext)
+library(gutenbergr)
+library(scales)
+library(tidyr)
+library(wordcloud)
+library(reshape2)
+data(stop_words)
+library(RColorBrewer)
+library(sentimentr)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(sentimentr)
+library(tidyselect)
+library(magrittr)
+#devtools::install_github("Truenumbers/tnum/tnum")
+#install.packages("glue")
+library(tnum)
+tnum.authorize("mssp1.bu.edu")
+#tnum.getDBPathList(taxonomy = "subject", levels=2)
+tnum.setSpace("test3")
+source("Book2TN-v6A-1.R")
+```
+
+## 1. Load the book into test2 number spaces
+```{r}
+call_of_wild <- readLines('215-0.txt')
+#tnBooksFromLines(call_of_wild , "elisaaaa/call")
+#check if I have already upload the book
+#tnum.getDBPathList(taxonomy="subject", levels=2)
+
+#downlaod 
+df1 <- tnum.query('elisaaaa/call/section# has text',max=7000) %>% tnum.objectsToDf()
+```
+
+## 2. Create sentence level sentiment plot
+
+```{r echo = FALSE,fig.align='center', fig.cap= 'sentence sentiment plot'}
+
+call_sentence <- df1 %>% separate(col=subject,
+                  into = c("path1", "path2","chapter","paragraph","sentence"), 
+                  sep = "/", 
+                  fill = "right") %>% 
+  select(chapter:string.value)
+
+
+call_sentence <- call_sentence %>% mutate_at(c('chapter','paragraph','sentence'),~str_extract_all(.,"\\d+") %>% unlist() %>% as.numeric())
+
+call_sentence_out <- call_sentence %>% dplyr::mutate(sentence_split = get_sentences(string.value)) %$%
+    sentiment_by(sentence_split, list(chapter))
+
+plot(call_sentence_out)
+```
+The sentence level analysis is more reasonable than the analysis in word level. In the first 5 chapter, Buck suffers a lot. He was a handsome dog living in a wealthy family. A theft stole him and his hard life began. And according to the sentiment analysis, chapters before 6 where he met his last master - John, the sentiment becomes more negative.
+
+
+```{r echo = FALSE,fig.align='center', fig.cap= 'sentence sentiment plot'}
+plot(uncombine(call_sentence_out))
+```
+
+
+\newpage
+
+## 3. Compare two level sentiment analysis
+```{r,fig.width=10, fig.height=4, fig.align='center' , fig.cap = 'Comparison of two level analysis'}
+call_of_wild <- gutenberg_download(215)
+
+tidy_call_of_wild <- call_of_wild %>%
+  mutate(
+    linenumber = row_number(),
+    chapter = cumsum(str_detect(text, 
+                                regex("Chapter \\w*", 
+                                      ignore_case = TRUE)))) %>%
+  unnest_tokens(word, text) %>% 
+  anti_join(stop_words)
+
+new_bing_tidy_call_of_wild <- tidy_call_of_wild %>% 
+    inner_join(get_sentiments("bing")) %>%
+    mutate(method = "Bing") %>% 
+    count(method, index = chapter, sentiment) %>%
+  pivot_wider(names_from = sentiment,
+              values_from = n,
+              values_fill = 0) %>% 
+  mutate(sentiment = positive - negative)
+
+new_bing_tidy_call_of_wild_2 <- 
+  new_bing_tidy_call_of_wild %>% 
+  mutate(bing_scale = scale(sentiment)) %>% 
+  select(method, index, bing_scale)
+
+colnames(new_bing_tidy_call_of_wild_2)[2] <- 'chapter'
+
+sentence_out <- call_sentence_out %>% mutate(sentimentr_scale = scale(ave_sentiment))
+
+
+sentence_out_2method <- left_join(sentence_out, new_bing_tidy_call_of_wild_2, by = 'chapter') %>%     select(chapter,bing_scale,sentimentr_scale)
+
+
+sentence_out_2method_plot <- sentence_out_2method %>% pivot_longer(cols=c('sentimentr_scale','bing_scale'),names_to = 'sentiment')
+
+sentence_out_2method_plot %>% ggplot(aes(y = value,x = factor(chapter))) +
+  geom_bar(aes(fill = factor(sentiment)),stat='identity',position = "dodge",width = 0.7)+
+  theme_bw()
+```
+We can see from the plot above. There are discrepancy between sentence level and word level analysis. The blue one indicates the sentiment analyzed using sentences. And the red one indicates the sentiment analysis using words. The largest difference happens in the last chapter where Buck became a leader in the wild which is a good thing for Buck. In the sentence level analysis, we have the context to find the sentiments behind. However, in the word level analysis, the 'wild' word is very pessimistic, that's why the value of sentiment is negative. 
+In sum, sentence level analysis is more precise. 
+
+# EXTRA CREDIT: character analysis
+
+The two main characters in the book <The Call of the Wild> are Buck and John.We use tnum to calculate the frequency when two main character appears in the same paragraph. 
+
+
+```{r}
+
+book_sentence_index <-call_sentence %>% mutate(buck=str_match(call_sentence$string.value,regex('([Bb]uck)'))[,1],
+                         john=str_match(call_sentence$string.value,regex('([Jj]ohn)|[Tt]hornton'))[,1])
+
+score <- book_sentence_index %>% dplyr::mutate(sentence_split = get_sentences(string.value))%$%
+    sentiment_by(sentence_split) %>% `$`(ave_sentiment)
+
+book_sentence_index$score <- score
+
+re <- book_sentence_index %>% group_by(chapter) %>% summarise(Buck=sum(buck %>% is.na() %>% `!`()), john = sum(john%>% is.na() %>% `!`()))
+
+re2 <- book_sentence_index %>% 
+  group_by(chapter,paragraph) %>% 
+  summarise(both_appear = sum(buck %>% is.na() %>% `!`() & john%>% is.na() %>% `!`() ))
+re3 <- re2 %>% filter(both_appear >0)
+```
+
+The frequency of John and Buck in the same chapter
+```{r}
+knitr::kable(re, align = 'c')
+```
+
+```{r}
+#The frequency of John and Buck in the same paragraph 
+#knitr::kable(re2, align = 'c')
+```
+
+```{r fig.cap= 'Word frenquncy for two main characters', fig.align='center'}
+colors<- c("buck" = "#FF6666", "john" = "#69b3a2")
+ggplot(re,aes(x = chapter)) + 
+  geom_point(aes(y = Buck),shape=19, color="black", fill="black", size=1) +
+  geom_point(aes(y = john),shape=21, color="black", fill="black", size=1) +
+  geom_line(aes(y = Buck, color = "buck"),size=1) + 
+  geom_line(aes(y = john, color = "john"), linetype="twodash",size=1)+
+  scale_color_manual(values = colors)+
+  xlab("Chapter")+
+  ylab("word frenquncy")
+```
+Above is the frequency where buck and john shows in the chapter. The trend is close to the story line. In the chapter 5, Buck and John meet each other and become good friends. Their story mainly happens in chapter 6. By the end of chapter 6, John died. That's why the word freuqncy came together became less. 
+
