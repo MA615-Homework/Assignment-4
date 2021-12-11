@@ -1,0 +1,215 @@
+---
+title: "Sentiment Analysis"
+author: Elisa Zhang
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(tidyverse)
+library(scales)
+library(methods)
+library(knitr)
+library(janeaustenr)
+library(dplyr)
+library(stringr)
+library(tidytext)
+library(gutenbergr)
+library(scales)
+library(tidyr)
+library(wordcloud)
+library(reshape2)
+data(stop_words)
+library(RColorBrewer)
+library(sentimentr)
+library(gridExtra)
+library(grid)
+library(lattice)
+#devtools::install_github("Truenumbers/tnum/tnum")
+#install.packages("glue")
+library(tnum)
+#tnum.authorize("mssp1.bu.edu")
+#tnum.getDBPathList(taxonomy = "subject", levels=1)
+#tnum.setSpace("test2")
+source("Book2TN-v6A-1.R")
+```
+
+
+# Task one: pick a book 
+The book I chose is The Call of the Wild written by Jack London. I will use gutenbergr Package to download the full text and do the later analysis. 
+```{r}
+call_of_wild <- gutenberg_download(215)
+```
+
+## 1. Tidy data
+
+First, I wrangled the book data and exclude the stop words in the book. Then I count the word frequncy and here shows the words whose frequency are larger than 50 in The Call of the Wild.
+```{r echo = FALSE}
+tidy_call_of_wild <- call_of_wild %>%
+  mutate(
+    linenumber = row_number(),
+    chapter = cumsum(str_detect(text, 
+                                regex("Chapter \\w*", 
+                                      ignore_case = TRUE)))) %>%
+  unnest_tokens(word, text) %>% 
+  anti_join(stop_words)
+```
+
+```{r echo = FALSE, fig.cap="Word Frequncy", fig.align='center'}
+tidy_call_of_wild %>%
+  count(word, sort = TRUE) %>%
+  filter(n > 50) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word)) +
+  geom_col() +
+  labs(y = NULL)
+```
+
+## 2.Sentiment analysis using three different lexicons
+
+In this part, I use three different lexicons to apply the sentiment analysis on the book. When we compare three sentiment analysis, we found the result is quite different in chapter 2 where Bing lexicon only gave us negative feedback. Following the plots, I think using NRC lexicon might be better than other two. The plots in each chapter are not invariant. However, in bing lexicon, nearly all Chapter 2, 3 and 5 only show negative sentiments. And in the last chapter, Buck - the main character in the book sheds the veneer of civilization, and relies on primordial instinct and learned experience to emerge as a leader in the wild. It is obvious that the last part of the book is a mix of success and difficulties. In this way, NRC lexicon is the best in sentiment analysis among three lexicons. 
+
+```{r echo = FALSE }
+bing_sentiment <- tidy_call_of_wild %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(chapter, index = linenumber %/%10, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative, method = 'bing')
+
+nrc_sentiment <- tidy_call_of_wild %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(chapter, index = linenumber %/%10, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative, method = 'nrc')
+
+afinn_sentiment <- tidy_call_of_wild %>%
+  inner_join(get_sentiments("afinn")) %>%
+  group_by(chapter, index = linenumber %/% 10) %>% 
+  summarise(sentiment = sum(value)) %>% 
+  mutate(method = "AFINN")
+```
+
+```{r echo = FALSE, fig.cap="Sentiment Analysis differnet lexicons", fig.align='center'}
+ggplot(bing_sentiment, aes(index, sentiment,fill = factor(chapter))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~chapter, ncol = 2, scales = "free_x") + 
+  ggtitle("Sentiment Analysis using bing")
+
+ggplot(afinn_sentiment, aes(index, sentiment,fill = factor(chapter))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~chapter, ncol = 2, scales = "free_x") + 
+  ggtitle("Sentiment Analysis using afinn")
+
+ggplot(nrc_sentiment, aes(index, sentiment,fill = factor(chapter))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~chapter, ncol = 2, scales = "free_x") + 
+  ggtitle("Sentiment Analysis using NRC")
+```
+
+
+
+
+
+
+
+
+\newpage
+
+## 3. Most common positive and negative words in The Call of the Wild
+
+```{r echo = FALSE, fig.cap="Contribution to the sentiment using Bing", fig.align='center'}
+bing_word_counts <- tidy_call_of_wild %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+bing_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+```{r echo = FALSE, fig.cap="Contribution to the sentiment using NRC", fig.align='center'}
+custom_stop_words <- bind_rows(tibble(word = c("buck",'john'),  
+                                      lexicon = c("custom")), 
+                               stop_words)
+
+
+nrc_word_counts <- tidy_call_of_wild %>%
+  anti_join(custom_stop_words) %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  ungroup()
+
+nrc_word_counts %>%
+  group_by(sentiment) %>%
+  slice_max(n, n = 10) %>% 
+  ungroup() %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(n, word, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~sentiment, scales = "free_y") +
+  labs(x = "Contribution to sentiment",
+       y = NULL)
+```
+
+We analyze word counts that contribute to each sentiment. When we using Bing lexicon, the top 1 word that contributed to negative sentiment is wild. The analysis is not precise. For Buck - a dog, wild is his final and best home. However, in the positive part, the result is reasonable. 
+
+When first implement the analysis using nrc lexicon, there is an anomaly: the word 'buck' is the name of the main character. We add the name buck to the stop_words and re-run the analysis. 
+
+When compared the most common positive and negative words in the book, I used two different lexicons. I might not tell which one is better. They all have strengths and weakness. It might indicate that it is not enough to implement word level sentiment analysis. 
+
+\newpage
+## 4.Wordclouds
+
+Here we show the most common negative and positive words using bing lexicon in the book.
+```{r echo = FALSE, fig.align='center'}
+tidy_call_of_wild %>%
+  inner_join(get_sentiments("bing")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(colors = c("gray20", "gray80"),
+                   max.words = 100)
+```
+
+```{r echo = FALSE, fig.align='center'}
+tidy_call_of_wild %>%
+  inner_join(get_sentiments("nrc")) %>%
+  count(word, sentiment, sort = TRUE) %>%
+  acast(word ~ sentiment, value.var = "n", fill = 0) %>%
+  comparison.cloud(title.size=2, colors = brewer.pal(10,name  ='RdBu'),match.colors=TRUE,
+                   max.words = 100,title.bg.colors="grey80")
+```
+
+\newpage
+## 5. Additional Lexicons
+
+I will use an additional lexicons called loughran which is created from financial report.
+```{r echo = FALSE,fig.cap="Sentiment Analysis using loughran" , fig.align='center'}
+#get_sentiments("loughran")
+loughran_sentiment <- tidy_call_of_wild %>%
+  inner_join(get_sentiments("loughran")) %>%
+  count(chapter, index = linenumber %/%10, sentiment) %>%
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) %>% 
+  mutate(sentiment = positive - negative, method = "loughran")
+
+ggplot(loughran_sentiment, aes(index, sentiment,fill = factor(chapter))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~chapter, ncol = 2, scales = "free_x")
+```
+
+Compare sentiment analysis using 4 types of lexicons. 
+```{r echo = FALSE, fig.cap="Comparison 4 types of lexicons", fig.align='center'}
+bind_rows(afinn_sentiment, bing_sentiment, nrc_sentiment,loughran_sentiment) %>% 
+  ggplot() + 
+  geom_col(aes(index, sentiment, fill = method), show.legend = FALSE) + 
+  facet_wrap(~ method, nrow = 4)
+```
+
+Since loughran lexicon is designed for financial report, its performance is not good as the language is quite different between short fictions and reports.  
